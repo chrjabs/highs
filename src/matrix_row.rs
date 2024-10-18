@@ -11,6 +11,13 @@ use crate::Problem;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Col(pub(crate) usize);
 
+impl Col {
+    /// Gets the index of the column
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
+
 /// A complete optimization problem stored by row
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RowMatrix {
@@ -71,7 +78,7 @@ impl Problem<RowMatrix> {
         N: Into<f64> + Copy,
         B: RangeBounds<N>,
         ITEM: Borrow<(Col, f64)>,
-        I: IntoIterator<Item=ITEM>,
+        I: IntoIterator<Item = ITEM>,
     >(
         &mut self,
         bounds: B,
