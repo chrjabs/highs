@@ -610,6 +610,11 @@ impl SolvedModel {
         HighsModelStatus::try_from(model_status).unwrap()
     }
 
+    /// Gets the objective value of the solution to the problem
+    pub fn get_objective_value(&self) -> f64 {
+        unsafe { Highs_getObjectiveValue(self.highs.unsafe_mut_ptr()) }
+    }
+
     /// Get the solution to the problem
     pub fn get_solution(&self) -> Solution {
         let cols = self.num_cols();
