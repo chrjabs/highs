@@ -113,6 +113,7 @@ use std::ffi::{c_void, CString};
 use std::num::TryFromIntError;
 use std::ops::{Bound, Index, RangeBounds};
 use std::os::raw::c_int;
+use std::ptr::null;
 
 use highs_sys::*;
 
@@ -337,7 +338,7 @@ impl Model {
 
     /// Set a custom parameter on the model.
     /// For the list of available options and their documentation, see:
-    /// <https://www.maths.ed.ac.uk/hall/HiGHS/HighsOptions.html>
+    /// <https://ergo-code.github.io/HiGHS/dev/options/definitions/>
     ///
     /// ```
     /// # use highs::ColProblem;
@@ -532,6 +533,73 @@ impl Model {
 
         Ok(Col(self.highs.num_cols()? - 1))
     }
+
+    /// Hot-starts at the initial guess. See HIGHS documentation for further details.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    ///
+    /// If the data passed in do not have the correct lengths.
+    /// `cols` and `col_duals` should have the lengths of `num_cols`.
+    /// `rows` and `row_duals` should have the lengths of `num_rows`.
+    pub fn set_solution(
+        &mut self,
+        cols: Option<&[f64]>,
+        rows: Option<&[f64]>,
+        col_duals: Option<&[f64]>,
+        row_duals: Option<&[f64]>,
+    ) {
+        self.try_set_solution(cols, rows, col_duals, row_duals)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+    /// Tries to hot-start using an initial guess by passing the column and row primal and dual solution values.
+    /// See highs_c_api.h for further details.
+    ///
+    /// If the data passed in do not have the correct lengths, an `Err` is returned.
+    /// `cols` and `col_duals` should have the lengths of `num_cols`.
+    /// `rows` and `row_duals` should have the lengths of `num_rows`.
+    pub fn try_set_solution(
+        &mut self,
+        cols: Option<&[f64]>,
+        rows: Option<&[f64]>,
+        col_duals: Option<&[f64]>,
+        row_duals: Option<&[f64]>,
+    ) -> Result<(), HighsStatus> {
+        let num_cols = self.highs.num_cols()?;
+        let num_rows = self.highs.num_rows()?;
+        if let Some(cols) = cols {
+            if cols.len() != num_cols {
+                return Err(HighsStatus::Error);
+            }
+        }
+        if let Some(rows) = rows {
+            if rows.len() != num_rows {
+                return Err(HighsStatus::Error);
+            }
+        }
+        if let Some(col_duals) = col_duals {
+            if col_duals.len() != num_cols {
+                return Err(HighsStatus::Error);
+            }
+        }
+        if let Some(row_duals) = row_duals {
+            if row_duals.len() != num_rows {
+                return Err(HighsStatus::Error);
+            }
+        }
+        unsafe {
+            highs_call!(Highs_setSolution(
+                self.highs.mut_ptr(),
+                cols.map(|x| { x.as_ptr() }).unwrap_or(null()),
+                rows.map(|x| { x.as_ptr() }).unwrap_or(null()),
+                col_duals.map(|x| { x.as_ptr() }).unwrap_or(null()),
+                row_duals.map(|x| { x.as_ptr() }).unwrap_or(null())
+            ))
+        }?;
+        Ok(())
+    }
 }
 
 impl From<SolvedModel> for Model {
@@ -604,7 +672,7 @@ impl HighsPtr {
 }
 
 impl SolvedModel {
-    /// The status of the solution. Should be Optimal if everything went well
+    /// The status of the solution. Should be Optimal if everything went well.
     pub fn status(&self) -> HighsModelStatus {
         let model_status = unsafe { Highs_getModelStatus(self.highs.unsafe_mut_ptr()) };
         HighsModelStatus::try_from(model_status).unwrap()
@@ -613,6 +681,18 @@ impl SolvedModel {
     /// Gets the objective value of the solution to the problem
     pub fn get_objective_value(&self) -> f64 {
         unsafe { Highs_getObjectiveValue(self.highs.unsafe_mut_ptr()) }
+    }
+
+    /// The mip gap of the solution. Should be 0.0 if an optimal solution was
+    /// found. Will be INFINITY if no variables have an integer constraint.
+    pub fn mip_gap(&self) -> f64 {
+        let name = CString::new("mip_gap").unwrap();
+        let gap: &mut f64 = &mut -1.0;
+        let status =
+            unsafe { Highs_getDoubleInfoValue(self.highs.unsafe_mut_ptr(), name.as_ptr(), gap) };
+        try_handle_status(status, "Highs_getDoubleInfoValue")
+            .map(|_| *gap)
+            .unwrap()
     }
 
     /// Get the solution to the problem
@@ -704,6 +784,8 @@ fn try_handle_status(status: c_int, msg: &str) -> Result<HighsStatus, HighsStatu
 
 #[cfg(test)]
 mod test {
+    use std::f64::INFINITY;
+
     use super::*;
 
     fn test_coefs(coefs: [f64; 2]) {
@@ -756,5 +838,53 @@ mod test {
         model.add_row(2.0.., vec![(new_col, 1.0)]);
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Infeasible);
+    }
+
+    #[test]
+    fn test_initial_solution() {
+        use crate::status::HighsModelStatus::Optimal;
+        use crate::{Model, RowProblem, Sense};
+        let mut p = RowProblem::default();
+        p.add_column(1., 0..50);
+        let mut m = Model::new(p);
+        m.make_quiet();
+        m.set_sense(Sense::Maximise);
+        m.set_option("time_limit", 0);
+        m.set_solution(Some(&[50.0]), Some(&[]), Some(&[1.0]), Some(&[]));
+        let solved = m.solve();
+        assert_eq!(solved.status(), Optimal);
+        assert_eq!(solved.get_solution().columns(), &[50.0]);
+    }
+
+    #[test]
+    fn test_mip_gap() {
+        use crate::status::HighsModelStatus::Optimal;
+        use crate::{Model, RowProblem, Sense};
+        let mut p = RowProblem::default();
+        p.add_integer_column(1., 0..50);
+        let mut m = Model::new(p);
+        m.make_quiet();
+        m.set_sense(Sense::Maximise);
+        let solved = m.solve();
+        println!("{:?}", solved.get_solution());
+        assert_eq!(solved.status(), Optimal);
+        assert_eq!(solved.mip_gap(), 0.0);
+        assert_eq!(solved.get_solution().columns(), &[50.0]);
+    }
+
+    #[test]
+    fn test_inf_mip_gap() {
+        use crate::status::HighsModelStatus::Optimal;
+        use crate::{Model, RowProblem, Sense};
+        let mut p = RowProblem::default();
+        p.add_column(1., 0..50);
+        let mut m = Model::new(p);
+        m.make_quiet();
+        m.set_sense(Sense::Maximise);
+        let solved = m.solve();
+        println!("{:?}", solved.get_solution());
+        assert_eq!(solved.status(), Optimal);
+        assert_eq!(solved.mip_gap(), INFINITY);
+        assert_eq!(solved.get_solution().columns(), &[50.0]);
     }
 }

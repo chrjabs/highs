@@ -1,6 +1,6 @@
 [package]
 name = "highs"
-version = "1.6.1"
+version = "1.9.0"
 authors = ["Ophir LOJKINE", "rust-or"]
 edition = "2021"
 description = "Safe rust bindings for the HiGHS linear programming solver. See http://highs.dev."
@@ -9,5 +9,8 @@ repository = "https://github.com/rust-or/highs"
 keywords = ["linear-programming", "optimization", "math", "solver"]
 
 [dependencies]
-highs-sys = "1.6.1"
+highs-sys = "1.7.0"
 log = "0.4.17"
+
+[patch.crates-io]
+highs-sys = { git = "https://github.com/chrjabs/highs-sys.git", branch = "bindgen-0.71" }
