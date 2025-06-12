@@ -271,6 +271,16 @@ impl Model {
         assert_eq!(ret, STATUS_OK, "changeObjectiveSense failed");
     }
 
+    /// Gets the number of columns in the model
+    pub fn num_cols(&self) -> usize {
+        self.highs.num_cols().expect("num cols does not fit usize")
+    }
+
+    /// Gets the number of rows in the model
+    pub fn num_rows(&self) -> usize {
+        self.highs.num_rows().expect("num rows does not fit usize")
+    }
+
     /// Create a Highs model to be optimized (but don't solve it yet).
     /// If the given problem is a [RowProblem], it will have to be converted to a [ColProblem] first,
     /// which takes an amount of time proportional to the size of the problem.
