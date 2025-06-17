@@ -220,6 +220,18 @@ where
     pub fn change_column_cost(&mut self, col: Col, cost: f64) {
         self.colcost[col.index()] = cost
     }
+
+    /// Updates the bounds of a column
+    pub fn change_column_bounds<N: Into<f64> + Copy, B: RangeBounds<N>>(
+        &mut self,
+        col: Col,
+        bounds: B,
+    ) {
+        let low = bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY);
+        let high = bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY);
+        self.collower[col.index()] = low;
+        self.colupper[col.index()] = high;
+    }
 }
 
 fn bound_value<N: Into<f64> + Copy>(b: Bound<&N>) -> Option<f64> {
@@ -556,6 +568,25 @@ impl Model {
                 self.highs.mut_ptr(),
                 col.index() as c_int,
                 cost
+            ))
+            .unwrap_or_else(|e| panic!("HiGHS error: {e:?}"));
+        }
+    }
+
+    /// Updates the bounds of a column
+    pub fn change_column_bounds<N: Into<f64> + Copy, B: RangeBounds<N>>(
+        &mut self,
+        col: Col,
+        bounds: B,
+    ) {
+        let low = bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY);
+        let high = bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY);
+        unsafe {
+            highs_call!(Highs_changeColBounds(
+                self.highs.mut_ptr(),
+                col.index() as c_int,
+                low,
+                high
             ))
             .unwrap_or_else(|e| panic!("HiGHS error: {e:?}"));
         }
